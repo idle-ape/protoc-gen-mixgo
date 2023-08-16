@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package example;
+
+option go_package = "github.com/idle-ape/protoc-gen-mixgo/example";
+
+service HelloWorld {
+    rpc Greet (HelloReq) returns (HelloResp) {}
+}
+
+message HelloReq {
+    string req = 1;
+}
+
+message HelloResp {
+    string resp = 1;
+}
