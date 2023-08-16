@@ -41,6 +41,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	g.P("")
 	g.P("\"google.golang.org/grpc\"")
 	g.P("\"github.com/idle-ape/mixgo/metrics\"")
+	g.P("\"google.golang.org/grpc/status\"")
 	g.P(")")
 
 	g.P("var (")
@@ -48,27 +49,17 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	g.P("DefaultServerCounterName = \"server_counter\"")
 	g.P("// DefaultServerHistogramName default name for server histogram")
 	g.P("DefaultServerHistogramName = \"server_histogram\"")
+	g.P("// DefaultClientCounterName default name for client counter")
+	g.P("DefaultClientCounterName = \"client_counter\"")
+	g.P("// DefaultClientHistogramName default name for client histogram")
+	g.P("DefaultClientHistogramName = \"client_histogram\"")
+	g.P("// DefaultQPSName default species name to collect qps metrics")
+	g.P("DefaultQPSName = \"QPS\"")
 	g.P(")")
 
 	for _, service := range file.Services {
-		funcName := fmt.Sprintf("%sMetricsUnaryServerInterceptor", service.GoName)
-		g.P("// ", funcName, " server side unary interceptor for metrics collection")
-		g.P("func ", funcName, "(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {")
-		g.P("// 统计接口耗时")
-		g.P("start := time.Now()")
-		g.P("defer func() {")
-		g.P("metrics.Histogram(DefaultServerHistogramName).WithLabelValues(info.FullMethod).Observe(time.Since(start).Seconds())")
-		g.P("}()")
-
-		g.P("// 统计QPS")
-		g.P("metrics.Counter(DefaultServerCounterName).WithLabelValues(info.FullMethod).Add(1)")
-
-		g.P("if resp, err = handler(ctx, req); err != nil {")
-		g.P("return nil, err")
-		g.P("}")
-		g.P("return resp, nil")
-		g.P("}")
-		g.P("")
+		generateMetricsUnaryServerInterceptor(g, service.GoName)
+		generateMetricsUnaryClientInterceptor(g, service.GoName)
 	}
 
 	// for _, msg := range file.Messages {
@@ -77,4 +68,56 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	// 	g.P("}")
 	// }
 	return g
+}
+
+// generateMetricsUnaryServerInterceptor generate unary server interceptor fro metrics
+func generateMetricsUnaryServerInterceptor(g *protogen.GeneratedFile, serviceName string) {
+	funcName := fmt.Sprintf("%sMetricsUnaryServerInterceptor", serviceName)
+	g.P("// ", funcName, " server side unary interceptor for metrics collection")
+	g.P("func ", funcName, "(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {")
+	g.P("// 统计接口耗时")
+	g.P("start := time.Now()")
+	g.P("defer func() {")
+	g.P("metrics.Histogram(DefaultServerHistogramName).WithLabelValues(info.FullMethod).Observe(time.Since(start).Seconds())")
+	g.P("}()")
+
+	g.P("// 统计QPS")
+	g.P("metrics.Counter(DefaultServerCounterName).WithLabelValues(info.FullMethod, DefaultQPSName).Add(1)")
+
+	g.P("if resp, err = handler(ctx, req); err != nil {")
+	g.P("// 统计错误码分布")
+	g.P("if s, ok := status.FromError(err); ok {")
+	g.P("metrics.Counter(DefaultServerCounterName).WithLabelValues(info.FullMethod, s.Code().String()).Add(1)")
+	g.P("}")
+	g.P("return nil, err")
+	g.P("}")
+	g.P("return resp, nil")
+	g.P("}")
+	g.P("")
+}
+
+// generateMetricsUnaryClientInterceptor generate unary client interceptor fro metrics
+func generateMetricsUnaryClientInterceptor(g *protogen.GeneratedFile, serviceName string) {
+	funcName := fmt.Sprintf("%sMetricsUnaryClientInterceptor", serviceName)
+	g.P("// ", funcName, " client side unary interceptor for metrics collection")
+	g.P("func ", funcName, "(ctx context.Context, fullMethod string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {")
+	g.P("// 统计接口耗时")
+	g.P("start := time.Now()")
+	g.P("defer func() {")
+	g.P("metrics.Histogram(DefaultClientHistogramName).WithLabelValues(fullMethod).Observe(time.Since(start).Seconds())")
+	g.P("}()")
+
+	g.P("// 统计QPS")
+	g.P("metrics.Counter(DefaultClientCounterName).WithLabelValues(fullMethod, DefaultQPSName).Add(1)")
+
+	g.P("if err := invoker(ctx, fullMethod, req, reply, cc, opts...); err != nil {")
+	g.P("// 统计错误码分布")
+	g.P("if s, ok := status.FromError(err); ok {")
+	g.P("metrics.Counter(DefaultClientCounterName).WithLabelValues(fullMethod, s.Code().String()).Add(1)")
+	g.P("}")
+	g.P("return err")
+	g.P("}")
+	g.P("return nil")
+	g.P("}")
+	g.P("")
 }
